@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+
+# Babu code has already been loaded; skip
+[[ "$babu_initialized" == 1 ]] && return 0
+
+# Ensure Bash version > 3
+[[ ${BASH_VERSION%%[^0-9]*} -lt 3 ]] && echo "Bash version needs to be higher than 3; you have ${BASH_VERSION}" && exit 1
+
+# Don't expand to literal '*' in empty directory
+shopt -s nullglob
+
+######################### private #########################
+
+# Copy a function to a new name.
+#
+# Example:
+#   a() {
+#     do_something
+#   }
+#   _babu_copy_function a b
+#   # `b` is now the same as `a`
+#
+_babu_copy_function() {
+  test -n "$(declare -f $1)" || return 
+  eval "${_/$1/$2}"
+}
+
+# Copy a function to a new name.
+#
+# Example:
+#   a() {
+#     do_something
+#   }
+#   _babu_rename_function a b
+#   # `a` is now named `b` and `a` does not exist
+#
+_babu_rename_function() {
+  _babu_copy_function "$@" || return
+  unset -f "$1"
+}
+
+# Reechos STDIN with each line prepended with $_babu_current_indentation
+_babu_log_pipe() {
+  while read; do echo "${_babu_current_indentation}${REPLY}"; done
+}
+
+# Reechos STDIN to STDERR with each line prepended with $_babu_current_indentation
+_babu_log_error() {
+  while read; do echo "${_babu_current_indentation}${REPLY}"; done 1>&2
+}
+
+# Echos arguments prepended with $_babu_current_indentation
+_babu_log() {
+  echo -e "${_babu_current_indentation}$*"
+}
+
+# Enters a new block and increases the indent in $_babu_current_indentation
+_babu_indent() {
+  _babu_log "$1 {"
+  _babu_current_indentation="${_babu_current_indentation}  "
+}
+
+# Exits current block and decreases the indent in $_babu_current_indentation
+_babu_outdent() {
+  _babu_current_indentation="${_babu_current_indentation%  }"
+  _babu_log "} $1"
+}
+
+# Prints a Y/n prompt and tests against [Yy] (blank is considered Y)
+_babu_ask() {
+  read -p "${_babu_current_indentation}$1 (Y/n): "
+  [[ -z "$REPLY" || "$REPLY" =~ ^[Yy] ]]
+}
+
+# Transforms a string argument into one that is a valid function name
+#
+# Example:
+#   # When you declare a dep:
+#   dep 'Make all the things!'
+#   # babu uses _babu_sanitize_dep_name internally to create a function
+#   # named: __BABU__Make__all__the__things__()
+_babu_sanitize_dep_name() {
+  echo "__BABU__${1//[^a-zA-Z0-9]/__}"
+}
+
+# Generates a function that runs the dependencies that were declared with
+# requires which will be run before the met block
+#
+# This function's name will be the dep function name appended with "_requires"
+_babu_generate_requires_function() {
+  local body="true"
+
+  for x in "$@"; do
+    body+=" && _babu_run_dep \"$x\""
+  done
+
+  if [[ "$body" == "true" ]]; then
+    body="echo 'no additional requirements' > /dev/null"
+  fi
+
+  eval "
+  ${_babufied_dep_name}_requires() {
+    $body
+  }
+  "
+}
+
+# We need a way to finalize a dep section since the met() and meet() functions
+# are general names which need to be renamed to be specific to the previous dep
+# (or else all the deps will share the same met() and meet()). Furthermore, we
+# need to clean out temporary variables that were created.
+#
+# Unfortunately, in Bash there's no way to detect when a function is defined
+# and immediately rename the function. The only way to know if a dep section is
+# completely is when a new dep section begins or when we're at the end and babu
+# is ready to run all the deps. Thus, this function is called right before
+# dep() and babu_run().
+_babu_finalize_previous_dep() {
+  _babu_generate_requires_function "${_babu_dep_requires[@]}"
+  _babu_dep_requires=()
+
+  eval "${_babufied_dep_name}_arguments=(\"\$_babu_dep_arguments\")"
+  _babu_dep_arguments=()
+
+  _babu_rename_function met "${_babufied_dep_name}_met"
+  _babu_rename_function meet "${_babufied_dep_name}_meet"
+}
+
+# Run the named dep
+_babu_run_dep() {
+  local _babufied_dep_name=$(_babu_sanitize_dep_name "$1")
+  if declare -F "$_babufied_dep_name" > /dev/null; then
+    "$_babufied_dep_name"
+  else
+    echo "undefined dep: $1" 1>&2
+    return 1
+  fi
+}
+
+######################### public #########################
+
+# Convenience function to be run inside a meet() that allows a command to be
+# run based on user confirmation
+#
+# Example:
+#   meet() {
+#     run rm *
+#   }
+#   # When the dep runs meet(), it will first ask:
+#   #   Run `rm *`? [Y/n]
+#
+run() {
+  if _babu_ask "Run \`$*\`?"; then
+    "$@"
+  else
+    echo "Not running \`$*\`" 1>&2
+    return 1
+  fi
+}
+
+# Declare a dep with a name. The name will be the first argument provided, and
+# can contain any characters, but dep names must be unique after being
+# sanitized with _babu_sanitize_dep_name().
+dep() {
+  _babu_finalize_previous_dep
+  _babufied_dep_name=$(_babu_sanitize_dep_name "$1")
+  arguments
+  eval "
+  met() {
+    echo 'WARNING: empty met() condition for $1' 1>&2
+  }
+  meet() {
+    echo 'WARNING: empty meet() for $1' 1>&2
+  }
+
+  $_babufied_dep_name() {
+    local meet_try_count=0
+    local meet_try_limit=1
+
+    _babu_indent \"$1\"
+    ${_babufied_dep_name}_requires
+
+    if [ \$PIPESTATUS != 0 ]; then
+      _babu_outdent \"\\033[31m✗\\033[0m $1\"
+      return 1
+    fi
+
+    while true; do
+      # remember to run met() in subprocess (putting it in pipe incidentally does just that)
+      ${_babufied_dep_name}_met \"\${${_babufied_dep_name}_arguments[@]}\" 2> >(_babu_log_error) | _babu_log_pipe
+      if [ \$PIPESTATUS == 0 ]; then
+        _babu_outdent \"\\033[32m✓\\033[0m $1\"
+
+        $_babufied_dep_name() {
+          _babu_log \"$1 \\033[32m✓\\033[0m (cached)\"
+          return 0
+        }
+
+        return 0
+      else
+        if [ \$meet_try_count -lt \$meet_try_limit ]; then
+          let meet_try_count++
+          _babu_indent meet
+          # remember to run meet() in subprocess (putting it in pipe incidentally does just that)
+          ${_babufied_dep_name}_meet \"\${${_babufied_dep_name}_arguments[@]}\" 2> >(_babu_log_error) | _babu_log_pipe
+          _babu_outdent
+        else
+          _babu_outdent \"\\033[31m✗\\033[0m $1\"
+          return 1
+        fi
+      fi
+    done
+  }
+  "
+}
+
+# Declares requirements for dep by taking each argument to be another dep's
+# name. Can be called multiple times (each call will append to the list of
+# requirements).
+requires() {
+  _babu_dep_requires=("${_babu_dep_requires[@]}" "$@")
+}
+
+# Provides arguments that will be passed to the meet() function as "$@"
+arguments() {
+  _babu_dep_arguments=("$@")
+}
+
+######################### main #########################
+
+# Actually run the dep with the given name. If no name is passed, runs the dep
+# named "default".
+babu_run() {
+  _babu_finalize_previous_dep
+
+  local dep_to_run="${1:-default}"
+
+  _babu_run_dep "$dep_to_run"
+}
+
+# All babu code has been initialized. If this file is re-sourced, it will simply return 0.
+babu_initialized=1
+
+# If this babu script was sourced and not run from the command line, then we
+# need to re-source the original script that sourced this script before we run
+# babu_run below. This is because we need the deps in the original script to be
+# defined before we run babu_run.
+#
+# If this babu script is the original command and not sourced from another
+# script, then we source Babufile to define deps before we run babu_run.
+if [[ "$BASH_SOURCE" != "$0" ]]; then
+  source "$0"
+else
+  if [[ -f Babufile ]]; then
+    source Babufile
+  else
+    echo "Babufile not found in `pwd`" 1>&2
+    exit 1
+  fi
+fi
+
+# Actually run the dep named in the command argument. If no arguments were
+# provided, runs the "default" dep.
+babu_run "$@"
+
+# We exit from the script because this script might have been sourced from
+# another script, in which case the original script has already been sourced
+# for its dep definitions.
+exit $?
