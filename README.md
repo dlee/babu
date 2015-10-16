@@ -9,8 +9,11 @@ Babushka is an [old woman](https://en.wikipedia.org/wiki/Babushka); babu is an [
 
 ## Usage
 
-Running `babu $dependency` will run the named dependency defined in a `Babufile` in the current directory. If no `$dependency` is provided as an argument to `babu`, `babu` will run the dependency named "default".
-
+A dep (standing for "dependency") is the core unit of a task in babu. Each dep is named and can be invoked by running `babu $dep_name`:
+```
+$ babu "install zsh"
+```
+The above command will run the dep named "install zsh" that's defined in the `Babufile` in the current directory. If no argument is provided to `babu`, `babu` will run the dep named "default".
 ```
 $ babu
 ```
@@ -19,18 +22,62 @@ is the same as
 $ babu default
 ```
 
-If you need to pass additional information into the script, you can do so with environment variables:
+If you need to pass additional information into the script, you can do so with [environment variables](#variables):
 ```
 $ EXTRA_VAR1=hello EXTRA_VAR2=world babu
 ```
 
 ### Babufile
 
-A `Babufile` is simply a Bash script that defines dependencies for `babu` using its special `dep` declaration convention:
+Babu provides a DSL for defining deps in Bash. A dep mainly consists of `met` and `meet` functions; the former checks for a condition (and returns the result as a return code) and the latter satisfies it. These functions are written in pure Bash and can run any command.
+
+A `Babufile` is simply a Bash script that defines dependencies for `babu` using this DSL:
 
 ```bash
 # Babufile
+dep "on staging branch"
+{
+  met() {
+    branch=`git symbolic-ref --short HEAD`
+    echo "Currently on $branch."
+    [ "staging" == "$branch" ]
+  }
+  meet() {
+    git checkout staging
+  }
+}
+```
 
+A `dep $dep_name` starts the definition of a dependency. The first argument to `dep` will be the unique name of the dep (e.g. "on git branch" in above example) and will be used to run the particular dep or make the dep a requirement of another dep (See [requires](#requires)). Once a `dep` is declared, the following function definitions for `met()` and `meet()` will belong to that dep:
+* `met()` tests for whether or not the dependency is met. A `0` return code (in the shell, 0 means success) will be considered as the dependency being met.
+* `meet()` hosts code that satisfies the dependency in case `met()` returns a non-`0` return code.
+
+```
+$ git checkout master
+$ babu "on staging branch"
+on staging branch {
+  Currently on master.
+  meet {
+    Switched to branch 'staging'
+    Your branch is up-to-date with 'origin/staging'.
+  }
+  Currently on staging.
+} ✓ on staging branch
+```
+`babu` ran the `met()` function to see if the current branch was `staging`, and since it was not, ran `meet()` to fulfill the dependency. Notice how the `met()` check was run again after `meet()` was run. If the second `met()` check had failed, `babue` would have aborted with an error. However, in the above example, we can see that it has correctly satisfied the dependency. Now if we run the `babu` command again:
+
+```
+$ babu "on staging branch"
+on staging branch {
+  Currently on staging.
+} ✓ on staging branch
+```
+Since the current branch is already `staging`, `meet()` is skipped.
+
+### Variables
+You can pass in variables to `babu` as you would any Bash script, by using environment variables:
+```bash
+# Babufile
 : ${TARGET_BRANCH:="master"} # $TARGET_BRANCH defaults to "master"
 
 dep "on git branch"
@@ -46,33 +93,28 @@ dep "on git branch"
 }
 ```
 
-A `dep` starts the definition of a dependency. A dependency is named (e.g. "on git branch" in above example) and can be required by other dependencies. `dep` can be followed by function definitions for `met()` and `meet()`:
-* `met()` tests for whether or not the dependency is met. A `0` return code will be considered as the dependency being met.
-* `meet()` hosts code that satisfies the dependency in case `met()` returns a non-`0` return code.
-
+We've set up a default value for `$TARGET_BRANCH` in the Babufile, but if we pass in an initial value for `$TARGET_BRANCH`, Bash will use the value passed in:
 ```
-$ git checkout master
 $ TARGET_BRANCH=staging babu "on git branch"
+on staging branch {
+  Currently on staging.
+} ✓ on staging branch
+```
+
+If we don't pass in an initial value for `$TARGET_BRANCH`, then Bash will set the value to `master`:
+```
+$ babu "on git branch"
 on git branch {
-  Currently on master.
+  Currently on staging.
   meet {
-    Switched to branch 'staging'
-    Your branch is up-to-date with 'origin/staging'.
+    Switched to branch 'master'
+    Your branch is up-to-date with 'origin/master'.
   }
-  Currently on staging.
+  Currently on master.
 } ✓ on git branch
 ```
-`babu` ran the `met()` function to see if the current branch was `staging`, and since it was not, ran `meet()` to fulfill the dependency. Notice how the `met()` check was run again after `meet()` was run. If the second `met()` check had failed, `babue` would have aborted with an error. However, in the above example, we can see that it has correctly satisfied the dependency. Now if we run the `babu` command again:
 
-```
-$ git checkout master
-$ TARGET_BRANCH=staging babu "on git branch"
-on git branch {
-  Currently on staging.
-} ✓ on git branch
-```
-Since the current branch is already `staging`, `meet()` is skipped.
-
+### Requires
 Dependencies can require other dependencies by using the `requires` directive:
 
 ```bash
@@ -115,7 +157,7 @@ dep "default"
 }
 ```
 
-In the example above, the "default" dependency now requires the "on git branch" dependency. This means that the "on git branch" dependency must be met before "default" dependency:
+In the example above, the "default" dependency now requires the "on git branch" dependency. This means that the "on git branch" dependency must be met before the "default" dependency:
 ```
 $ babu
 default {
@@ -144,6 +186,9 @@ dep "needy task"
   requires "need 3"
 }
 ```
+
+#### Caveats
+Since babu internally converts all deps into Bash functions, there is a lossy dep-to-function name conversion that may cause collision in dep naming: `"babu me good"`, `"babu.me.good"`, and `"babu-me-good"` would all be mapped to the same function name. The rule of thumb is to avoid dep names whose only difference is non-alphanumeric characters.
 
 ## Installation
 
