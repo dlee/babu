@@ -9,6 +9,11 @@
 # Don't expand to literal '*' in empty directory
 shopt -s nullglob
 
+######################### constants #######################
+
+_babu_fail_mark=$'\033[31m✗\033[0m'
+_babu_success_mark=$'\033[32m✓\033[0m'
+
 ######################### private #########################
 
 # Copy a function to a new name.
@@ -39,37 +44,38 @@ _babu_rename_function() {
   unset -f "$1"
 }
 
-# Reechos STDIN with each line prepended with $_babu_current_indentation
+# Reechos STDIN one character at a time with each line, prepending each line
+# with $_babu_current_indentation.
 _babu_log_pipe() {
-  while read; do echo "${_babu_current_indentation}${REPLY}"; done
-}
+  need_indent=1
+  while IFS= read -r -n1 -d '' char; do
+    if [ $need_indent ]; then
+      echo -n "${_babu_current_indentation}"
+      need_indent=
+    fi
 
-# Reechos STDIN to STDERR with each line prepended with $_babu_current_indentation
-_babu_log_error() {
-  while read; do echo "${_babu_current_indentation}${REPLY}"; done 1>&2
+    echo -n "$char"
+    if [ "$char" == $'\n' ]; then
+      need_indent=1
+    fi
+  done
 }
 
 # Echos arguments prepended with $_babu_current_indentation
-_babu_log() {
-  echo -e "${_babu_current_indentation}$*"
+_babu_indented_echo() {
+  echo "${_babu_current_indentation}$*"
 }
 
 # Enters a new block and increases the indent in $_babu_current_indentation
-_babu_indent() {
-  _babu_log "$1 {"
+_babu_enter_section() {
+  _babu_indented_echo "$1 {"
   _babu_current_indentation="${_babu_current_indentation}  "
 }
 
 # Exits current block and decreases the indent in $_babu_current_indentation
-_babu_outdent() {
+_babu_exit_section() {
   _babu_current_indentation="${_babu_current_indentation%  }"
-  _babu_log "} $1"
-}
-
-# Prints a Y/n prompt and tests against [Yy] (blank is considered Y)
-_babu_ask() {
-  read -p "${_babu_current_indentation}$1 (Y/n): "
-  [[ -z "$REPLY" || "$REPLY" =~ ^[Yy] ]]
+  _babu_indented_echo "} $1"
 }
 
 # Transforms a string argument into one that is a valid function name
@@ -83,20 +89,16 @@ _babu_sanitize_dep_name() {
   echo "__BABU__${1//[^a-zA-Z0-9]/__}"
 }
 
-# Generates a function that runs the dependencies that were declared with
-# requires which will be run before the met block
+# Defines a function that runs the dep's requires, which will be run before
+# this dep's met block
 #
 # This function's name will be the dep function name appended with "_requires"
-_babu_generate_requires_function() {
+_babu_define_requires_function() {
   local body="true"
 
   for x in "$@"; do
     body+=" && _babu_run_dep \"$x\""
   done
-
-  if [[ "$body" == "true" ]]; then
-    body="echo 'no additional requirements' > /dev/null"
-  fi
 
   eval "
   ${_babufied_dep_name}_requires() {
@@ -116,7 +118,7 @@ _babu_generate_requires_function() {
 # is ready to run all the deps. Thus, this function is called right before
 # dep() and babu_run().
 _babu_finalize_previous_dep() {
-  _babu_generate_requires_function "${_babu_dep_requires[@]}"
+  _babu_define_requires_function "${_babu_dep_requires[@]}"
   _babu_dep_requires=()
 
   eval "${_babufied_dep_name}_arguments=(\"\$_babu_dep_arguments\")"
@@ -132,31 +134,12 @@ _babu_run_dep() {
   if declare -F "$_babufied_dep_name" > /dev/null; then
     "$_babufied_dep_name"
   else
-    echo "undefined dep: $1" 1>&2
+    echo "ERROR: unknown dep \"$1\"" 1>&2
     return 1
   fi
 }
 
 ######################### public #########################
-
-# Convenience function to be run inside a meet() that allows a command to be
-# run based on user confirmation
-#
-# Example:
-#   meet() {
-#     run rm *
-#   }
-#   # When the dep runs meet(), it will first ask:
-#   #   Run `rm *`? [Y/n]
-#
-run() {
-  if _babu_ask "Run \`$*\`?"; then
-    "$@"
-  else
-    echo "Not running \`$*\`" 1>&2
-    return 1
-  fi
-}
 
 # Declare a dep with a name. The name will be the first argument provided, and
 # can contain any characters, but dep names must be unique after being
@@ -177,22 +160,22 @@ dep() {
     local meet_try_count=0
     local meet_try_limit=1
 
-    _babu_indent \"$1\"
+    _babu_enter_section \"$1\"
     ${_babufied_dep_name}_requires
 
     if [ \$PIPESTATUS != 0 ]; then
-      _babu_outdent \"\\033[31m✗\\033[0m $1\"
+      _babu_exit_section \"$_babu_fail_mark $1\"
       return 1
     fi
 
     while true; do
       # remember to run met() in subprocess (putting it in pipe incidentally does just that)
-      ${_babufied_dep_name}_met \"\${${_babufied_dep_name}_arguments[@]}\" 2> >(_babu_log_error) | _babu_log_pipe
+      ${_babufied_dep_name}_met \"\${${_babufied_dep_name}_arguments[@]}\" 2>&1 | _babu_log_pipe
       if [ \$PIPESTATUS == 0 ]; then
-        _babu_outdent \"\\033[32m✓\\033[0m $1\"
+        _babu_exit_section \"$_babu_success_mark $1\"
 
         $_babufied_dep_name() {
-          _babu_log \"$1 \\033[32m✓\\033[0m (cached)\"
+          _babu_indented_echo \"$1 $_babu_success_mark (cached)\"
           return 0
         }
 
@@ -200,12 +183,12 @@ dep() {
       else
         if [ \$meet_try_count -lt \$meet_try_limit ]; then
           let meet_try_count++
-          _babu_indent meet
+          _babu_enter_section meet
           # remember to run meet() in subprocess (putting it in pipe incidentally does just that)
-          ${_babufied_dep_name}_meet \"\${${_babufied_dep_name}_arguments[@]}\" 2> >(_babu_log_error) | _babu_log_pipe
-          _babu_outdent
+          ${_babufied_dep_name}_meet \"\${${_babufied_dep_name}_arguments[@]}\" 2>&1 | _babu_log_pipe
+          _babu_exit_section
         else
-          _babu_outdent \"\\033[31m✗\\033[0m $1\"
+          _babu_exit_section \"$_babu_fail_mark $1\"
           return 1
         fi
       fi
