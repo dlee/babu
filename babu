@@ -121,9 +121,6 @@ _babu_finalize_previous_dep() {
   _babu_define_requires_function "${_babu_dep_requires[@]}"
   _babu_dep_requires=()
 
-  eval "${_babufied_dep_name}_arguments=(\"\$_babu_dep_arguments\")"
-  _babu_dep_arguments=()
-
   _babu_rename_function met "${_babufied_dep_name}_met"
   _babu_rename_function meet "${_babufied_dep_name}_meet"
 }
@@ -147,7 +144,6 @@ _babu_run_dep() {
 dep() {
   _babu_finalize_previous_dep
   _babufied_dep_name=$(_babu_sanitize_dep_name "$1")
-  arguments
   eval "
   met() {
     echo 'WARNING: empty met() condition for $1' 1>&2
@@ -170,7 +166,7 @@ dep() {
 
     while true; do
       # remember to run met() in subprocess (putting it in pipe incidentally does just that)
-      ${_babufied_dep_name}_met \"\${${_babufied_dep_name}_arguments[@]}\" 2>&1 | _babu_log_pipe
+      ${_babufied_dep_name}_met 2>&1 | _babu_log_pipe
       if [ \$PIPESTATUS == 0 ]; then
         _babu_exit_section \"$_babu_success_mark $1\"
 
@@ -185,7 +181,7 @@ dep() {
           let meet_try_count++
           _babu_enter_section meet
           # remember to run meet() in subprocess (putting it in pipe incidentally does just that)
-          ${_babufied_dep_name}_meet \"\${${_babufied_dep_name}_arguments[@]}\" 2>&1 | _babu_log_pipe
+          ${_babufied_dep_name}_meet 2>&1 | _babu_log_pipe
           _babu_exit_section
         else
           _babu_exit_section \"$_babu_fail_mark $1\"
@@ -202,11 +198,6 @@ dep() {
 # requirements).
 requires() {
   _babu_dep_requires=("${_babu_dep_requires[@]}" "$@")
-}
-
-# Provides arguments that will be passed to the meet() function as "$@"
-arguments() {
-  _babu_dep_arguments=("$@")
 }
 
 ######################### main #########################
