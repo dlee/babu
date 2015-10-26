@@ -1,6 +1,6 @@
 # Babu: sysadmin automation in Bash
 
-[Babu](https://github.com/dlee/babu) is a tiny automation script written in the venerable Bash scripting language. It is heavily influenced by [babushka](https://babushka.me/) and follows the same principle for automating computing chores:
+[Babu](https://github.com/dlee/babu) is a tiny automation script written in the venerable Bash scripting language. It is heavily influenced by [babushka](https://babushka.me/) and follows the same strategy for automating computing chores:
 > for each dependency (dep) of the job to do, a test, and the code to make that test pass -- test-driven sysadmin."
 
 This project's name obviously comes from babushka. It was originally intended to be `babu.sh` for extra cleverness, but convenience and ease favored `babu`.
