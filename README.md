@@ -3,6 +3,8 @@
 [Babu](https://github.com/dlee/babu) is a tiny automation script written in the venerable Bash scripting language. It is heavily influenced by [babushka](https://babushka.me/) and follows the same strategy for automating computing chores:
 > for each dependency (dep) of the job to do, a test, and the code to make that test pass -- test-driven sysadmin."
 
+The reason for creating a separate project was because babushka required ruby to run, but I wanted something that could run on ruby-less systems. [Installation](#installation) only requires bash, which is found on virtually every *nix system since the past decade.
+
 This project's name obviously comes from babushka. It was originally intended to be `babu.sh` for extra cleverness, but convenience and ease favored `babu`.
 
 Babushka is an [old woman](https://en.wikipedia.org/wiki/Babushka); babu is an [old man](https://en.wikipedia.org/wiki/Babu_(title)).
@@ -101,7 +103,7 @@ on staging branch {
 } ✓ on staging branch
 ```
 
-If we don't pass in an initial value for `$TARGET_BRANCH`, then Bash will set the value to `master`:
+If we don't pass in an initial value for `$TARGET_BRANCH`, then the default value of `master` will be used:
 ```
 $ babu "on git branch"
 on git branch {
@@ -195,7 +197,7 @@ Since babu internally converts all deps into Bash functions, there is a lossy de
 `babu` is a self-contained single-file script that should run on most Unix systems. `babu` was created out of a desire to have babushka-like automation script with minimal dependencies (babushka requires ruby). The only requirement for `babu` is that you have bash version 3 or above.
 
 ```
-$ git clone git@github.com:dlee/babu.git
+$ git clone https://github.com/dlee/babu.git
 $ cp babu/babu /bin/babu
 $ chmod a+x /bin/babu
 ```
