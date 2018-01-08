@@ -37,7 +37,7 @@ A `Babufile` is simply a Bash script that defines dependencies for `babu` using 
 
 ```bash
 # Babufile
-dep "on staging branch"
+dep "checkout staging branch"
 {
   met() {
     branch=`git symbolic-ref --short HEAD`
@@ -56,23 +56,23 @@ A `dep $dep_name` starts the definition of a dependency. The first argument to `
 
 ```
 $ git checkout master
-$ babu "on staging branch"
-on staging branch {
+$ babu "checkout staging branch"
+checkout staging branch {
   Currently on master.
   meet {
     Switched to branch 'staging'
     Your branch is up-to-date with 'origin/staging'.
   }
   Currently on staging.
-} ✓ on staging branch
+} ✓ checkout staging branch
 ```
 `babu` ran the `met()` function to see if the current branch was `staging`, and since it was not, ran `meet()` to fulfill the dependency. Notice how the `met()` check was run again after `meet()` was run. If the second `met()` check had failed, `babue` would have aborted with an error. However, in the above example, we can see that it has correctly satisfied the dependency. Now if we run the `babu` command again:
 
 ```
-$ babu "on staging branch"
-on staging branch {
+$ babu "checkout staging branch"
+checkout staging branch {
   Currently on staging.
-} ✓ on staging branch
+} ✓ checkout staging branch
 ```
 Since the current branch is already `staging`, `meet()` is skipped.
 
@@ -82,7 +82,7 @@ You can pass in variables to `babu` as you would any Bash script, by using envir
 # Babufile
 : ${TARGET_BRANCH:="master"} # $TARGET_BRANCH defaults to "master"
 
-dep "on git branch"
+dep "checkout branch"
 {
   met() {
     branch=`git symbolic-ref --short HEAD`
@@ -97,23 +97,23 @@ dep "on git branch"
 
 We've set up a default value for `$TARGET_BRANCH` in the Babufile, but if we pass in an initial value for `$TARGET_BRANCH`, Bash will use the value passed in:
 ```
-$ TARGET_BRANCH=staging babu "on git branch"
-on staging branch {
+$ TARGET_BRANCH=staging babu "checkout branch"
+checkout branch {
   Currently on staging.
-} ✓ on staging branch
+} ✓ checkout branch
 ```
 
 If we don't pass in an initial value for `$TARGET_BRANCH`, then the default value of `master` will be used:
 ```
-$ babu "on git branch"
-on git branch {
+$ babu "checkout branch"
+checkout branch {
   Currently on staging.
   meet {
     Switched to branch 'master'
     Your branch is up-to-date with 'origin/master'.
   }
   Currently on master.
-} ✓ on git branch
+} ✓ checkout branch
 ```
 
 ### Requires
@@ -124,7 +124,7 @@ Dependencies can require other dependencies by using the `requires` directive:
 
 : ${TARGET_BRANCH:="master"} # $TARGET_BRANCH defaults to "master"
 
-dep "git"
+dep "install git"
 {
   met() {
     which -s git
@@ -134,9 +134,9 @@ dep "git"
   }
 }
 
-dep "on git branch"
+dep "checkout branch"
 {
-  requires "git"
+  requires "install git"
   met() {
     branch=`git symbolic-ref --short HEAD`
     echo "Currently on $branch."
@@ -149,7 +149,7 @@ dep "on git branch"
 
 dep "default"
 {
-  requires "on git branch"
+  requires "checkout branch"
   met() {
     echo "We're good"
   }
@@ -159,25 +159,25 @@ dep "default"
 }
 ```
 
-In the example above, the "default" dependency now requires the "on git branch" dependency. This means that the "on git branch" dependency must be met before the "default" dependency:
+In the example above, the "default" dependency now requires the "checkout branch" dependency. This means that the "checkout branch" dependency must be met before the "default" dependency:
 ```
 $ babu
 default {
-  on git branch {
-    git {
-    } ✓ git
+  checkout branch {
+    install git {
+    } ✓ install git
     Currently on staging.
     meet {
       Switched to branch 'master'
       Your branch is up-to-date with 'origin/master'.
     }
     Currently on master.
-  } ✓ on git branch
+  } ✓ checkout branch
   We're good
 } ✓ default
 ```
 
-Notice how the "on git branch" dependency was satisfied before we even ran the `met()` for "default". Furthermore, the "git" dependency was satisfied before we checked the "on git branch" dependency. Requires can thus be nested.
+Notice how the "checkout branch" dependency was satisfied before we even ran the `met()` for "default". Furthermore, the "install git" dependency was satisfied before we checked the "checkout branch" dependency. Requires can thus be nested.
 
 You can also provide multiple requires by calling `requires` multiple times:
 ```bash
